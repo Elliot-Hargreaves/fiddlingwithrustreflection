@@ -46,8 +46,8 @@ impl SoftwareVersion {
     }
 }
 
-pub trait FieldDataType = Default + Clone + Reflect;
-pub trait FieldEnumType = Default + Clone + Reflect;
+pub trait FieldDataType = Default + Clone + Reflect + 'static;
+pub trait FieldEnumType = Default + Clone + Reflect + 'static;
 
 #[derive(Default, Reflect, Clone)]
 pub struct FieldInner<InnerType: FieldDataType, FieldEnum: FieldEnumType> {
@@ -170,12 +170,8 @@ pub trait ModifiableObject: IdentifiableObject {
     fn get_modify_command(&self) -> &'static str;
 }
 
-trait SystemObject: PartialEq {
+trait SystemObject: Reflect + Clone {
     type field_enum: FieldParameter;
-
-    fn eq(&self, rhs: &Self) -> bool {
-        PartialEq::eq(self, &rhs)
-    }
 }
 
 pub enum CommandType {
@@ -186,7 +182,7 @@ pub enum CommandType {
 
 pub enum Parameter {
     Parameter(&'static str),
-    Flag(&'static str),
+    Flag(&'static str, String),
 }
 
 pub trait FieldParameter: Default + Reflect + Clone {
@@ -216,33 +212,47 @@ pub struct Object<Type: Reflect + Clone> {
     new: Type,
 }
 
+trait AField: 'static + Reflect {
+    fn eq(self: &Self) -> bool;
+}
+
+
+
+impl<DataType: FieldDataType, EnumType: FieldEnumType + 'static>  AField for Field<DataType, EnumType> {
+    fn eq(&self) -> bool {
+        match self {
+            Field::Field(inner) => inner.old_value.is_some(),
+            Field::VersionedField(inner, _) => inner.old_value.is_some()
+        }
+    }
+}
+
 // to do this automatically need to be able to downcast into some concrete type that can perform the check
 
-// fn filter_changed_fields(field: &&dyn Reflect) -> bool {
-//     if let Some(field) = field.downcast_ref::<Field<dyn SystemObject, _>>() {
-//         match field {
-//             Field::Field(inner) => inner.old_value.is_some(),
-//             Field::VersionedField(inner, _) => inner.old_value.is_some()
-//         }
-//     } else {
-//         panic!("Couldn't downcast to field type")
-//     }
-// }
+fn filter_changed_fields<EnumFields: FieldEnumType>(field: &dyn AField) -> bool {
+    field.eq()
+}
 
 
-// struct IntoModificationCommant<ObjectType: ModifiableObject + Struct + SystemObject>(ObjectType);
-// impl<ObjectType: ModifiableObject + Struct + SystemObject> Into<ModificationCommand>
-//     for IntoModificationCommant<ObjectType>
-// {
-//     fn into(self) -> ModificationCommand {
-//         let inner = self.0;
+struct IntoModificationCommant<ObjectType: ModifiableObject + Struct + SystemObject>(ObjectType);
+impl<ObjectType: ModifiableObject + Struct + SystemObject> Into<ModificationCommand>
+    for IntoModificationCommant<ObjectType>
+{
+    fn into(self) -> ModificationCommand {
+        let inner = self.0;
 
-//         let object_id = format!("{}", inner.get_id());
-//         let command_string = String::from(inner.get_modify_command());
+        let object_id = format!("{}", inner.get_id());
+        let command_string = String::from(inner.get_modify_command());
 
-//         let command_arguments: Vec<&dyn Reflect> = inner.iter_fields().filter(filter_changed_fields).collect();
+        let command_arguments: Vec<&dyn Reflect> = inner.iter_fields().filter(|field| {
+            if let Some(field) = field.downcast_ref() {
+                filter_changed_fields(field)
+            } else {
+                panic!()
+            }
+        }).collect();
 
-//         ModificationCommand {
-//         }
-//     }
-// }
+        ModificationCommand {
+        }
+    }
+}
